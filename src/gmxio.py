@@ -11,8 +11,16 @@ from __future__ import print_function
 from builtins import zip
 from builtins import str
 from builtins import range
-import os, sys
+
+import os
 import re
+import random
+
+import numpy as np
+
+from copy import deepcopy
+from collections import defaultdict, OrderedDict
+
 from forcebalance.nifty import *
 from forcebalance.nifty import _exec
 from forcebalance import BaseReader
@@ -26,15 +34,9 @@ from forcebalance.moments import Moments
 from forcebalance.vibration import Vibration
 from forcebalance.molecule import Molecule
 from forcebalance.thermo import Thermo
-from copy import deepcopy
 from forcebalance.qchemio import QChem_Dielectric_Energy
-import itertools
-from collections import defaultdict, OrderedDict
-import traceback
-import random
-#import IPython
-
 from forcebalance.output import getLogger
+
 logger = getLogger(__name__)
 
 def edit_mdp(fin=None, fout=None, options={}, defaults={}, verbose=False):
@@ -144,7 +146,6 @@ def write_ndx(fout, grps, fin=None):
     @param[in] fin Input file name.
     """
     ndxgrps = OrderedDict()
-    atoms = []
     grp = None
     if fin is not None and os.path.isfile(fin):
         for line in open(fin):
@@ -205,6 +206,7 @@ fdict = {
 ## @todo This needs to become more flexible because the parameter isn't
 ## always in the same field.  Still need to figure out how to do this.
 ## @todo How about making the PDIHS less ugly?
+
 pdict = {'BONDS':{3:'B', 4:'K'},
          'G96BONDS':{},
          'MORSE':{3:'B', 4:'C', 5:'E'},
@@ -556,7 +558,7 @@ class GMX(Engine):
         if 'gmxpath' in kwargs:
             self.gmxpath = kwargs['gmxpath']
 
-            if type(self.gmxpath) is str and len(self.gmxpath) > 0:
+            if isinstance(self.gmxpath, str) and len(self.gmxpath) > 0:
                 ## Figure out the GROMACS version - it will determine how programs are called.
                 if os.path.exists(os.path.join(self.gmxpath,"gmx"+self.gmxsuffix)):
                     self.gmxversion = 5
@@ -567,7 +569,6 @@ class GMX(Engine):
                 else:
                     warn_press_key("The mdrun executable indicated by %s doesn't exist! (Check gmxpath and gmxsuffix)" \
                                    % os.path.join(self.gmxpath,"mdrun"+self.gmxsuffix))
-
         if not havegmx:
             warn_once("The 'gmxpath' option was not specified; using default.")
             if which('gmx'+self.gmxsuffix) != '':
@@ -634,9 +635,6 @@ class GMX(Engine):
             self.gmx_defs["rlist"] = "%.2f" % rlist
             self.gmx_defs["coulombtype"] = "pme"
             self.gmx_defs["rcoulomb"] = "%.2f" % rlist
-            # self.gmx_defs["coulombtype"] = "pme-switch"
-            # self.gmx_defs["rcoulomb"] = "%.2f" % (rlist - 0.05)
-            # self.gmx_defs["rcoulomb_switch"] = "%.2f" % (rlist - 0.1)
             self.gmx_defs["vdwtype"] = "switch"
             self.gmx_defs["rvdw"] = "%.2f" % rvdw
             self.gmx_defs["rvdw_switch"] = "%.2f" % rvdw_switch
@@ -781,7 +779,6 @@ class GMX(Engine):
     def callgmx(self, command, stdin=None, print_to_screen=False, print_command=False, **kwargs):
 
         """ Call GROMACS; prepend the gmxpath to the call to the GROMACS program. """
-
         ## Always, always remove backup files.
         rm_gmx_baks(os.getcwd())
         ## Create symbolic links (mainly for the case of .top and .mdp
@@ -792,11 +789,12 @@ class GMX(Engine):
         prog = os.path.join(self.gmxpath, csplit[0])
         if self.gmxversion == 5:
             csplit[0] = csplit[0].replace('g_','').replace('gmxdump','dump')
-            csplit = ['gmx' + self.gmxsuffix] + csplit
+            csplit = [os.path.join(self.gmxpath, 'gmx' + self.gmxsuffix)] + csplit
         elif self.gmxversion == 4:
             csplit[0] = prog + self.gmxsuffix
         else:
             raise RuntimeError('gmxversion can only be 4 or 5')
+        print(' '.join(csplit))
         return _exec(' '.join(csplit), stdin=stdin, print_to_screen=print_to_screen, print_command=print_command, **kwargs)
 
     def warngmx(self, command, warnings=[], maxwarn=1, **kwargs):
@@ -806,6 +804,7 @@ class GMX(Engine):
         # Common warning lines:
         # "You are generating velocities so I am assuming"
         # "You are not using center of mass motion removal"
+
         csplit = command.split()
         if '-maxwarn' in csplit:
             csplit[csplit.index('-maxwarn')+1] = '%i' % maxwarn
@@ -892,10 +891,10 @@ class GMX(Engine):
         edit_mdp(fin="%s.mdp" % self.name, fout="%s-min.mdp" % self.name, options=min_opts)
 
         self.warngmx("grompp -c %s.gro -p %s.top -f %s-min.mdp -o %s-min.tpr" % (self.name, self.name, self.name, self.name))
-        self.callgmx("mdrun -deffnm %s-min -nt 1" % self.name)
+        self.callgmx("mdrun -deffnm %s-min" % self.name)
         # self.callgmx("trjconv -f %s-min.trr -s %s-min.tpr -o %s-min.gro -ndec 9" % (self.name, self.name, self.name), stdin="System")
         self.callgmx("trjconv -f %s-min.trr -s %s-min.tpr -o %s-min.g96" % (self.name, self.name, self.name), stdin="System")
-        self.callgmx("g_energy -xvg no -f %s-min.edr -o %s-min-e.xvg" % (self.name, self.name), stdin='Potential')
+        self.callgmx("energy -xvg no -f %s-min.edr -o %s-min-e.xvg" % (self.name, self.name), stdin='Potential')
         
         E = float(open("%s-min-e.xvg" % self.name).readlines()[-1].split()[1])
         M = Molecule("%s.gro" % self.name, build_topology=False) + Molecule("%s-min.g96" % self.name)
@@ -927,24 +926,26 @@ class GMX(Engine):
 
         ## Call grompp followed by mdrun.
         self.warngmx("grompp -c %s.gro -p %s.top -f %s-1.mdp -o %s.tpr" % (self.name, self.name, self.name, self.name))
-        self.callgmx("mdrun -deffnm %s -nt 1 -rerunvsite %s" % (self.name, "-rerun %s" % traj if traj else ''))
+
+        self.callgmx("mdrun -deffnm %s -rerunvsite %s" % (self.name, "-rerun %s" % traj if traj else ''))
 
         ## Gather information
         Result = OrderedDict()
 
         ## Calculate and record energy
-        self.callgmx("g_energy -xvg no -f %s.edr -o %s-e.xvg" % (self.name, self.name), stdin='Potential')
+        self.callgmx("energy -xvg no -f %s.edr -o %s-e.xvg" % (self.name, self.name), stdin='Potential')
+
         Efile = open("%s-e.xvg" % self.name).readlines()
         Result["Energy"] = np.array([float(Eline.split()[1]) for Eline in Efile])
 
         ## Calculate and record force
         if force:
-            self.callgmx("g_traj -xvg no -s %s.tpr -f %s.trr -of %s-f.xvg -fp" % (self.name, self.name, self.name), stdin='System')
+            self.callgmx("traj -xvg no -s %s.tpr -f %s.trr -of %s-f.xvg -fp" % (self.name, self.name, self.name), stdin='System')
             Result["Force"] = np.array([[float(j) for i, j in enumerate(line.split()[1:]) if self.AtomMask[int(i/3)]] \
                                         for line in open("%s-f.xvg" % self.name).readlines()])
         ## Calculate and record dipole
         if dipole:
-            self.callgmx("g_dipoles -s %s.tpr -f %s -o %s-d.xvg -xvg no" % (self.name, traj if traj else '%s.gro' % self.name, self.name), stdin="System\n")
+            self.callgmx("dipoles -s %s.tpr -f %s -o %s-d.xvg -xvg no" % (self.name, traj if traj else '%s.gro' % self.name, self.name), stdin="System\n")
             Result["Dipole"] = np.array([[float(i) for i in line.split()[1:4]] for line in open("%s-d.xvg" % self.name)])
 
         return Result
@@ -1008,8 +1009,9 @@ class GMX(Engine):
         else:
             self.mol[shot].write("%s.gro" % self.name)
             self.warngmx("grompp -c %s.gro -p %s.top -f %s.mdp -o %s-1.tpr" % (self.name, self.name, self.name, self.name))
-            self.callgmx("mdrun -deffnm %s-1 -nt 1 -rerunvsite" % (self.name, self.name))
-            self.callgmx("g_energy -xvg no -f %s-1.edr -o %s-1-e.xvg" % (self.name, self.name), stdin='Potential')
+            self.callgmx(f"mdrun -deffnm {self.name}-1 -rerunvsite")
+            
+            self.callgmx("energy -xvg no -f %s-1.edr -o %s-1-e.xvg" % (self.name, self.name), stdin='Potential')
             E = float(open("%s-1-e.xvg" % self.name).readlines()[0].split()[1])
             return E, 0.0
 
@@ -1029,8 +1031,8 @@ class GMX(Engine):
         ## Call grompp followed by mdrun for interacting system.
         self.warngmx("grompp -c %s.gro -p %s.top -f %s-i.mdp -n %s.ndx -o %s-i.tpr" % \
                          (self.name, self.name, self.name, self.name, self.name))
-        self.callgmx("mdrun -deffnm %s-i -nt 1 -rerunvsite -rerun %s-all.gro" % (self.name, self.name))
-        self.callgmx("g_energy -f %s-i.edr -o %s-i-e.xvg -xvg no" % (self.name, self.name), stdin='Potential\n')
+        self.callgmx("mdrun -deffnm %s-i -rerunvsite -rerun %s-all.gro" % (self.name, self.name))
+        self.callgmx("energy -f %s-i.edr -o %s-i-e.xvg -xvg no" % (self.name, self.name), stdin='Potential\n')
         I = []
         for line in open('%s-i-e.xvg' % self.name):
             I.append(sum([float(i) for i in line.split()[1:]]))
@@ -1039,8 +1041,8 @@ class GMX(Engine):
         ## Call grompp followed by mdrun for noninteracting system.
         self.warngmx("grompp -c %s.gro -p %s.top -f %s-x.mdp -n %s.ndx -o %s-x.tpr" % \
                          (self.name, self.name, self.name, self.name, self.name))
-        self.callgmx("mdrun -deffnm %s-x -nt 1 -rerunvsite -rerun %s-all.gro" % (self.name, self.name))
-        self.callgmx("g_energy -f %s-x.edr -o %s-x-e.xvg -xvg no" % (self.name, self.name), stdin='Potential\n')
+        self.callgmx("mdrun -deffnm %s-x -rerunvsite -rerun %s-all.gro" % (self.name, self.name))
+        self.callgmx("energy -f %s-x.edr -o %s-x-e.xvg -xvg no" % (self.name, self.name), stdin='Potential\n')
         X = []
         for line in open('%s-x-e.xvg' % self.name):
             X.append(sum([float(i) for i in line.split()[1:]]))
@@ -1115,7 +1117,7 @@ class GMX(Engine):
             self.mol[shot].write("%s.gro" % self.name)
             self.warngmx("grompp -c %s.gro -p %s.top -f %s-nm.mdp -o %s-nm.tpr" % (self.name, self.name, self.name, self.name))
 
-        self.callgmx("mdrun -deffnm %s-nm -nt 1 -mtx %s-nm.mtx -v" % (self.name, self.name))
+        self.callgmx("mdrun -deffnm %s-nm -mtx %s-nm.mtx -v" % (self.name, self.name))
         self.callgmx("g_nmeig -s %s-nm.tpr -f %s-nm.mtx -of %s-nm.xvg -v %s-nm.trr -last 10000 -xvg no" % \
                          (self.name, self.name, self.name, self.name))
         self.callgmx("trjconv -s %s-nm.tpr -f %s-nm.trr -o %s-nm.g96" % (self.name, self.name, self.name), stdin="System")
@@ -1139,7 +1141,7 @@ class GMX(Engine):
     def generate_positions(self):
         ## Call grompp followed by mdrun.
         self.warngmx("grompp -c %s.gro -p %s.top -f %s.mdp -o %s.tpr" % (self.name, self.name, self.name, self.name))
-        self.callgmx("mdrun -deffnm %s -nt 1 -rerunvsite -rerun %s-all.gro" % (self.name, self.name))
+        self.callgmx("mdrun -deffnm %s -rerunvsite -rerun %s-all.gro" % (self.name, self.name))
         self.callgmx("trjconv -f %s.trr -o %s-out.g96 -novel -noforce" % (self.name, self.name), stdin='System')
         NewMol = Molecule("%s-out.g96" % self.name, build_topology-False)
         return NewMol.xyzs
