@@ -2,13 +2,14 @@
 
 from __future__ import division
 from __future__ import print_function
-from __future__ import absolute_import
+
 from builtins import zip
 from builtins import range
+
 import os, sys, re
 import numpy as np
-from .molecule import Molecule, Elements
-from .nifty import isint, isfloat
+from forcebalance.molecule import Molecule, Elements
+from forcebalance.nifty import isint, isfloat
 
 np.set_printoptions(precision=4)
 
@@ -211,7 +212,7 @@ def read_frq_psi_current(psiout):
     xyz = []
     elem = []
     readmodes = {}
-    for line in open(psiout).readlines():
+    for idx, line in enumerate(open(psiout).readlines()):
         VModeNxt = None
         if 'rotation-like modes' in line:
             #Output may contain rotation modes, skip these if so
@@ -246,86 +247,40 @@ def read_frq_psi_current(psiout):
                 for mode in readmodes.keys():
                     modes.append(readmodes[mode])
                 readmodes = {}
-        if VModeNxt is not None: VMode = VModeNxt
+        if VModeNxt is not None: 
+            VMode = VModeNxt
+        
+        # Read Coordinates
         if XMode == 1:
             s = line.split()
+            # Type1 Coordinate block: "symbol x y z mass"
             if len(s) == 5 and isfloat(s[1]) and isfloat(s[2]) and isfloat(s[3]):
                 e = s[0]
                 xyz.append([float(i) for i in s[1:4]])
                 if EMode == 1:
                     elem.append(e)
-            elif len(xyz) > 0:
-                xyzs.append(np.array(xyz))
-                xyz = []
-                XMode = 0
-        if line.strip().startswith("Geometry (in Angstrom)"):
-            XMode = 1
-            s = line.split()
-            if len(s) == 5 and isfloat(s[1]) and isfloat(s[2]) and isfloat(s[3]):
+            # Type2 Coordinate block: "symbol x y z"
+            elif len(s) == 4 and isfloat(s[1]) and isfloat(s[2]) and isfloat(s[3]):
                 e = s[0]
                 xyz.append([float(i) for i in s[1:4]])
                 if EMode == 1:
                     elem.append(e)
+            # After coordinate block
             elif len(xyz) > 0:
                 xyzs.append(np.array(xyz))
                 xyz = []
                 XMode = 0
+            # Before coordinate block
+            else:
+                continue
+
         if line.strip().startswith("Geometry (in Angstrom)"):
             XMode = 1
             EMode = len(elem) == 0
+
     #Eigenvectors are now normalized and non-mass weighted, so can just supply these directly without modification
     modes = [np.array(i) for i in modes]
     return np.array(frqs), modes, np.zeros_like(frqs), elem, np.array(xyzs[-1])
-
-def read_frq_psi_legacy(psiout):
-    """ """
-    VMode = 0
-    XMode = 0
-    EMode = 0
-    frqs = []
-    modes = []
-    xyzs = []
-    xyz = []
-    elem = []
-    for line in open(psiout).readlines():
-        VModeNxt = None
-        if 'Frequency:' in line:
-            VModeNxt = 1
-            if line.split()[-1].endswith('i'):
-                frqs.append(-1*float(line.split()[-1][:-1]))
-                # frqs.append(0.0) # After the optimization this mode is going to be useless...
-            else:
-                frqs.append(float(line.split()[-1]))
-        if VMode == 1:
-            if re.match('^[ \t]+X', line):
-                VModeNxt = 2
-                readmode = []
-        if VMode == 2:
-            s = line.split()
-            if len(s) != 5:
-                VMode = 0
-                modes.append(readmode[:])
-            else:
-                m = float(s[-1])
-                # Un-massweight the eigenvectors so that the output matches Q-Chem or Gaussian.
-                readmode.append([float(i)/np.sqrt(m) for i in s[1:4]])
-        if VModeNxt is not None: VMode = VModeNxt
-        if XMode == 1:
-            s = line.split()
-            if len(s) == 4 and isfloat(s[1]) and isfloat(s[2]) and isfloat(s[3]):
-                e = s[0]
-                xyz.append([float(i) for i in s[1:4]])
-                if EMode == 1:
-                    elem.append(e)
-            elif len(xyz) > 0:
-                xyzs.append(np.array(xyz))
-                xyz = []
-                XMode = 0
-        if line.strip().startswith("Geometry (in Angstrom)"):
-            XMode = 1
-            EMode = len(elem) == 0
-    unnorm = [np.array(i) for i in modes]
-    return np.array(frqs), [i/np.linalg.norm(i) for i in unnorm], np.zeros_like(frqs), elem, np.array(xyzs[-1])
 
 def read_frq_fb(vfnm):
     """ Read ForceBalance-formatted vibrational data from a vdata.txt file. """
@@ -424,21 +379,21 @@ def scale_freqs(arr):
 
 def read_frq_gen(fout):
     ln = 0
-    for line in open(fout):
+    for line in open(fout, "r"):
         if 'TeraChem' in line:
+            print("TeraChem")
             return read_frq_tc(fout)
         elif 'Q-Chem' in line:
+            print("Q-Chem")
             return read_frq_qc(fout)
-        elif 'Psi4' in line and 'release' in line:
-            ls = line.split()
-            version = ls[1]
-            if version >= '1.2':
-                return read_frq_psi_current(fout)
-            else:
-                return read_frq_psi_legacy(fout)
-        elif 'Gaussian' in line:
+        elif "psi4" in line.lower():
+            print("Psi4")
+            return read_frq_psi_current(fout)
+        elif 'Gaussian, Inc.' in line:
+            print("Gaussian")
             return read_frq_gau(fout)
         elif 'ForceBalance' in line:
+            print("ForceBalance")
             return read_frq_fb(fout)
         ln += 1
     raise RuntimeError('Cannot determine format')
