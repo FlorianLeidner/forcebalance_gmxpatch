@@ -65,13 +65,14 @@ def parse_args() -> argparse.Namespace:
 
     args = parser.parse_args()
 
-    args.targets = Path(args.targets)
-    if not args.targets.exists():
-        parser.error(f"{args.targets} does not exist")
+    args.fbin = Path(args.fbin)
+    if not args.fbin.exists():
+        parser.error(f"{args.fbin} does not exist")
 
     args.forcefield = Path(args.forcefield)
     if not args.forcefield.exists():
         parser.error(f"{args.forcefield} does not exist")
+
     elif not args.forcefield.is_dir():
         parser.error(f"{args.forcefield} must be a directory")
 
