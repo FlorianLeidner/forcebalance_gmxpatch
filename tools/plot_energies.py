@@ -53,7 +53,6 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
 
     parser.add_argument("fbin",
-                        dest="fbin",
                         help="Forcebalance inpout file")
     parser.add_argument("--forcefield",
                         dest="forcefield",
