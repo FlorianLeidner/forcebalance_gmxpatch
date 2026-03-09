@@ -46,6 +46,8 @@ def plot_energy(t):
 
     fig.savefig("energy_compare.png", dpi=dpi, bbox_inches="tight")
 
+    plt.close()
+
 
 def parse_args() -> argparse.Namespace:
     _description = "Plot the force field and quantum mechanics based energies"
